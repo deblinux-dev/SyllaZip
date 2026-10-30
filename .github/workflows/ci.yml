@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install brotli zstandard
+      - name: Selftest (round-trip + determinism)
+        run: python szgc_codec.py
+      - name: Fuzz
+        run: python tests/fuzz.py 300
+      - name: Benchmark vs gzip/bz2/xz/brotli/zstd
+        run: python bench.py
+
+  js-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Cross-check vs Python vectors
+        run: node tests/szgc_crosscheck.js
+      - name: JS fuzz
+        run: node tests/jsfuzz.js
+
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test (vectors + roundtrip + fuzz)
+        run: cargo test --release --manifest-path rust/Cargo.toml
+      - name: CLI selftest
+        run: cargo run --release --manifest-path rust/Cargo.toml -- selftest 500
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: [python-tests, js-tests, rust-tests]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+            name: szgc-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            archive: tar.gz
+            name: szgc-linux-aarch64
+            zigbuild: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: zip
+            name: szgc-macos-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: zip
+            name: szgc-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            name: szgc-windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cargo-zigbuild (linux aarch64)
+        if: matrix.zigbuild
+        run: |
+          pip3 install ziglang
+          cargo install --locked cargo-zigbuild
+      - name: Build
+        working-directory: rust
+        run: |
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bin=rust/target/${{ matrix.target }}/release/szgc
+          dir="${{ matrix.name }}"
+          mkdir -p "$dir"
+          cp "$bin" "$dir/"
+          cp README.md "$dir/"
+          chmod +x "$dir/szgc"
+          if [ "${{ matrix.archive }}" = "tar.gz" ]; then
+            tar czf "${{ matrix.name }}.tar.gz" "$dir"
+          else
+            zip -r "${{ matrix.name }}.zip" "$dir"
+          fi
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ matrix.name }}" | Out-Null
+          Copy-Item "rust/target/${{ matrix.target }}/release/szgc.exe" "${{ matrix.name }}/"
+          Copy-Item "README.md" "${{ matrix.name }}/"
+          Compress-Archive -Path "${{ matrix.name }}" -DestinationPath "${{ matrix.name }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.${{ matrix.archive }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.zip

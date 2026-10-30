@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="SyllaZip (SZGC) — морфографовое сжатие русского и английского текста: словарь словоформ + детерминированная графовая модель контекста + целочисленный range-кодер." />
+  <meta name="author" content="SyllaZip Project" />
+  <title>SyllaZip — Морфографовое сжатие русского и английского</title>
+
+  <link rel="icon" href="./favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
+  <!-- Styles — academia tokens, then components -->
+  <link rel="stylesheet" href="./css/academia.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+</head>
+<body>
+  <!-- ===================== Header ===================== -->
+  <header class="site-header">
+    <div class="container-wide site-header__inner">
+      <div class="site-header__brand">
+        <img src="./images/SyllazipWeb.png" alt="SyllaZip" class="site-header__logo" style="margin-left: 1rem" />
+        <div>
+          <h1 class="site-header__title">
+            SyllaZip <span class="ver">SZGC</span>
+          </h1>
+          <p class="site-header__subtitle">
+            Гибридный алгоритм морфографового сжатия русского и английского языка.
+          </p>
+        </div>
+      </div>
+      <div id="status-badge" class="status-badge status-badge--loading" title="Статус системы">
+        <span id="status-icon"><span class="status-badge__spinner"></span></span>
+        <span id="status-text">Инициализация…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== Main ===================== -->
+  <main class="container-wide section">
+
+    <!-- Loading progress card (visible during init only) -->
+    <div id="loading-card" class="card mb-2" style="display:none;">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <div>
+          <p class="spinner-label" id="loading-text">Загрузка…</p>
+          <p class="spinner-sub" id="loading-sub">Загрузка графовой модели SZGM…</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Входной текст + Статистика ====== -->
+    <div class="grid-2">
+
+      <!-- Input -->
+      <div class="space-y-2">
+        <div class="card corner-flourish card--hover">
+          <div class="card__header">
+            <div>
+              <span class="volume-label">Шаг I</span>
+              <h2 class="card__title">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <path d="M14 2v6h6M8 13h8M8 17h6"/>
+                </svg>
+                Входной текст
+              </h2>
+            </div>
+            <div class="sample-select">
+              <select id="sample-select" aria-label="Образец текста" disabled>
+                <option value="" disabled>— Образец —</option>
+              </select>
+            </div>
+          </div>
+
+          <textarea
+            id="input-text"
+            class="textarea"
+            placeholder="Введите текст для сжатия…"
+            disabled
+          ></textarea>
+
+          <div class="flex-between mt-2">
+            <span class="field-meta">
+              <span id="char-count">0</span> символов / <span id="byte-count">0</span> байт UTF-8
+            </span>
+            <div class="flex gap-2">
+              <button id="btn-compress" class="btn btn--primary btn--sm" data-action="compress" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 8v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/>
+                  <path d="M9 3h6M8 12h8M10 15h4"/>
+                </svg>
+                Сжать
+              </button>
+              <button id="btn-full-cycle" class="btn btn--secondary btn--sm" data-action="full-cycle" disabled>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/>
+                </svg>
+                Сжать и проверить
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats panel -->
+      <div>
+        <div class="card corner-flourish card--hover">
+          <div class="card__header">
+            <div>
+              <span class="volume-label">Шаг II</span>
+              <h2 class="card__title">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M3 3v18h18"/>
+                  <path d="M7 14l4-6 3 4 5-7"/>
+                </svg>
+                Статистика
+              </h2>
+            </div>
+          </div>
+          <div id="stats-panel">
+            <!-- populated by stats-renderer.js -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== Декомпрессор (base64 / файл) ====== -->
+    <section id="decoder-section">
+      <span class="volume-label"><br>Шаг III</span>
+      <h2 class="section-title">Декомпрессор</h2>
+      <div class="card corner-flourish card--hover">
+        <div class="flex-between mb-2">
+          <div class="pill-group" role="tablist" aria-label="Источник данных для декомпрессии">
+            <button type="button" class="pill is-active" data-decoder-tab="base64" role="tab" aria-selected="true">Base64</button>
+            <button type="button" class="pill" data-decoder-tab="file" role="tab" aria-selected="false">Файл</button>
+          </div>
+          <button type="button" id="btn-decoder-reset" class="btn btn--ghost btn--sm is-hidden" data-action="decoder-reset">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"/>
+            </svg>
+            Очистить
+          </button>
+        </div>
+
+        <!-- Base64 panel -->
+        <div id="decoder-base64-panel" class="decoder-panel">
+          <textarea
+            id="decoder-base64-input"
+            class="textarea textarea--mono"
+            placeholder="Вставьте base64-строку SyllaZip (результат кнопки «Сжать»)…"
+            style="min-height:120px;"
+            disabled
+          ></textarea>
+        </div>
+
+        <!-- File panel -->
+        <div id="decoder-file-panel" class="decoder-panel is-hidden">
+          <div
+            id="decoder-dropzone"
+            class="dropzone"
+            role="button"
+            tabindex="0"
+            aria-label="Перетащите или выберите .sz файл"
+          >
+            <svg class="dropzone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+            <div class="dropzone__text" id="decoder-file-info">
+              Перетащите .sz файл сюда или нажмите для выбора
+            </div>
+          </div>
+          <input
+            type="file"
+            id="decoder-file-input"
+            accept=".sz,application/octet-stream"
+            class="is-hidden"
+          />
+        </div>
+
+        <div class="flex-between mt-2">
+          <span class="field-meta" id="decoder-status">Готов к декомпрессии</span>
+          <button id="btn-decode" class="btn btn--primary btn--sm" data-action="decoder-decode" disabled>
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+            Декомпрессировать
+          </button>
+        </div>
+
+        <div id="decoder-error" class="verification verification--err mt-2 is-hidden" role="alert"></div>
+
+        <div id="decoder-output-wrap" class="mt-2 is-hidden">
+          <div class="decoder-output__header">
+            <span class="field-meta" id="decoder-output-meta"></span>
+            <div class="flex gap-2">
+              <button type="button" class="btn btn--ghost btn--sm" data-action="decoder-copy">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Копировать
+              </button>
+              <button type="button" class="btn btn--ghost btn--sm" data-action="decoder-download">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                Скачать .txt
+              </button>
+            </div>
+          </div>
+          <pre id="decoder-output-pre" class="code-block code-block--break" style="max-height:320px;"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ornate divider — only when results exist -->
+    <hr id="divider-results" class="ornate-divider is-hidden" data-glyph="star" />
+
+    <!-- ====== Глава IV — Результаты ====== -->
+    <section id="results-section" style="display:none;">
+      <span class="volume-label">Глава IV</span>
+      <h2 class="section-title">Результаты</h2>
+
+      <div id="tabs-container">
+        <!-- Tabs list -->
+        <div class="tabs__list" role="tablist">
+          <button class="tabs__trigger" data-tab="decompressed" role="tab">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 2v6h6"/>
+            </svg>
+            Результат
+          </button>
+          <button class="tabs__trigger" data-tab="hex" role="tab">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+            Hex-дамп
+          </button>
+          <button class="tabs__trigger" data-tab="base64" role="tab">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            Base64
+          </button>
+          <button class="tabs__trigger" data-tab="wordtable" role="tab">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M3 5v14a9 3 0 0 0 18 0V5"/>
+              <path d="M3 12a9 3 0 0 0 18 0"/>
+            </svg>
+            Токены блока
+          </button>
+        </div>
+
+        <!-- Decompressed panel -->
+        <div class="tabs__panel" data-tabpanel="decompressed" role="tabpanel">
+          <div class="card">
+            <div id="decompressed-pre"></div>
+          </div>
+        </div>
+
+        <!-- Hex panel -->
+        <div class="tabs__panel" data-tabpanel="hex" role="tabpanel">
+          <div class="card">
+            <div class="card__header">
+              <h3 class="card__title">Hex-дамп</h3>
+              <button class="btn btn--ghost btn--sm" data-action="copy-hex">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Копировать
+              </button>
+            </div>
+            <pre id="hex-pre" class="code-block"></pre>
+            <p class="field-meta mt-1" id="hex-meta">0 байт всего</p>
+          </div>
+        </div>
+
+        <!-- Base64 panel -->
+        <div class="tabs__panel" data-tabpanel="base64" role="tabpanel">
+          <div class="card">
+            <div class="card__header">
+              <h3 class="card__title">Base64</h3>
+              <button class="btn btn--ghost btn--sm" data-action="copy-base64">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Копировать
+              </button>
+            </div>
+            <pre id="base64-pre" class="code-block code-block--break"></pre>
+          </div>
+        </div>
+
+        <!-- Токены блока panel -->
+        <div class="tabs__panel" data-tabpanel="wordtable" role="tabpanel">
+          <div class="card">
+            <div class="card__header">
+              <h3 class="card__title">Токены блока</h3>
+            </div>
+            <div id="word-table-inner"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ornate divider — only when lemmas exist -->
+    <hr id="divider-lean" class="ornate-divider is-hidden" data-glyph="leaf" />
+
+    <!-- ====== Леммы текста ====== -->
+    <div id="lean-map-card" class="card corner-flourish card--hover" style="display:none;">
+      <div class="card__header">
+        <div>
+          <span class="volume-label">Приложение</span>
+          <h2 class="card__title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M3 5v14a9 3 0 0 0 18 0V5"/>
+              <path d="M3 12a9 3 0 0 0 18 0"/>
+            </svg>
+            Леммы текста (<span id="lemma-count">0</span> из <span id="global-lemma-count">?</span> в модели)
+          </h2>
+          <p class="card__subtitle">
+            Словарная словоформа кодируется рангом; лемма восстанавливается из таблицы модели SZGM.
+            Оверхеда в сжатом блоке нет.
+          </p>
+        </div>
+      </div>
+      <div id="lemma-wrap" class="lemma-wrap"></div>
+    </div>
+
+    <!-- Ornate divider — only when console has any logs -->
+    <hr id="divider-console" class="ornate-divider is-hidden" data-glyph="diamond" />
+
+    <!-- ====== Консоль ====== -->
+    <div class="card">
+      <div class="card__header">
+        <div>
+          <span class="volume-label">Глава V</span>
+          <h2 class="card__title">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M4 17l6-6-6-6M12 19h8"/>
+            </svg>
+            Консоль
+          </h2>
+        </div>
+      </div>
+      <div id="console" class="console" aria-live="polite"></div>
+    </div>
+  </main>
+
+  <!-- ===================== Footer ===================== -->
+  <footer class="site-footer">
+    <div class="container-wide site-footer__inner">
+      <hr class="ornate-divider" data-glyph="flower" style="margin-top:0;" />
+      <p>
+        <span class="accent">SyllaZip</span> &middot;
+        Морфографовое сжатие русского и английского &middot;
+        Графовая модель SZGM &middot;
+        <a href="./demo.html">минималистичное демо (запасное)</a>
+      </p>
+    </div>
+  </footer>
+
+  <!-- ====== скрипты ====== -->
+  <script src="./szgc.js"></script>
+  <script src="./js/utils.js"></script>
+  <script src="./js/tabs-controller.js"></script>
+  <script src="./js/stats-renderer.js"></script>
+  <script src="./js/compression-handler.js"></script>
+  <script src="./js/decoder-controller.js"></script>
+  <script src="./js/ui-controller.js"></script>
+  <script src="./js/main.js"></script>
+</body>
+</html>

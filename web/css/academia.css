@@ -1,0 +1,532 @@
+/* =========================================================================
+   SyllaZip — Academia / Classical Design System
+   Global tokens, fonts, textures, vignette, flourishes, dividers, arch-tops.
+   ========================================================================= */
+
+/* Google Fonts — Cormorant Garamond (headings), Crimson Pro (body), Cinzel (display/labels) */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Crimson+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Cinzel:wght@400;500;600;700&display=swap');
+
+/* ----------------------- Design Tokens ----------------------- */
+:root {
+  /* Foundation */
+  --bg-mahogany:      #1C1714; /* deep mahogany — page background */
+  --bg-aged-oak:      #251E19; /* aged oak — card/panel surface */
+  --bg-aged-oak-50:   rgba(37, 30, 25, 0.50);
+  --bg-aged-oak-30:   rgba(37, 30, 25, 0.30);
+  --fg-parchment:     #E8DFD4; /* antique parchment — primary text */
+  --muted-leather:    #3D332B; /* worn leather — tertiary backgrounds */
+  --muted-ink:        #9C8B7A; /* faded ink — secondary text, labels */
+  --border-wood:      #4A3F35; /* wood grain — borders, dividers */
+  --border-wood-50:   rgba(74, 63, 53, 0.50);
+
+  /* Accents */
+  --brass:            #C9A962; /* polished brass — primary interactive */
+  --brass-hi:         #D4B872; /* brass highlight (top of gradient) */
+  --brass-lo:         #B8953F; /* brass shadow (bottom of gradient) */
+  --brass-deep:       #A6863A; /* deep brass */
+  --brass-glow:       rgba(201, 169, 98, 0.30);
+  --crimson:          #8B2635; /* library crimson — emphasis */
+  --crimson-deep:     #5A1822; /* crimson shadow */
+  --crimson-fg:       #E8DFD4; /* parchment on crimson */
+
+  /* Fonts */
+  --font-heading: "Cormorant Garamond", "Crimson Pro", Georgia, serif;
+  --font-body:    "Crimson Pro", "Cormorant Garamond", Georgia, serif;
+  --font-display: "Cinzel", "Cormorant Garamond", Georgia, serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Radii */
+  --radius-default: 4px;
+  --radius-arch-top: 40% 40% 0 0 / 20% 20% 0 0;
+
+  /* Shadows */
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.30);
+  --shadow-emboss:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    0 2px 8px rgba(0, 0, 0, 0.30);
+  --shadow-emboss-hover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20),
+    0 4px 12px rgba(201, 169, 98, 0.30);
+  --shadow-wax-seal:
+    inset 0 2px 4px rgba(255, 255, 255, 0.20),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.30),
+    0 4px 8px rgba(0, 0, 0, 0.40);
+
+  /* Brass button gradient */
+  --gradient-brass: linear-gradient(180deg, #D4B872 0%, #C9A962 50%, #B8953F 100%);
+
+  /* Spacing */
+  --space-section-y: 4rem;
+  --space-block: 1.5rem;
+}
+
+/* ----------------------- Global Reset ----------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 1rem;
+  background-color: var(--bg-mahogany);
+  color: var(--fg-parchment);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.625;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Page main fills available height; footer drops to bottom on short pages */
+main {
+  flex: 1 0 auto;
+  width: 100%;
+}
+footer {
+  flex-shrink: 0;
+}
+
+/* ----------------------- Atmospheric Overlays ----------------------- */
+/* Aged paper grain — fractal noise, very subtle, fixed over viewport */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.03;
+  mix-blend-mode: overlay;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='7'/><feColorMatrix type='matrix' values='0 0 0 0 0.92  0 0 0 0 0.87  0 0 0 0 0.78  0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Vignette — radial darkening from center outward, fixed overlay */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background: radial-gradient(ellipse at center,
+    transparent 0%,
+    transparent 50%,
+    rgba(28, 23, 20, 0.40) 100%);
+}
+
+/* Make sure interactive elements still receive clicks */
+header, main, footer { position: relative; z-index: 3; }
+
+/* ----------------------- Typography ----------------------- */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--fg-parchment);
+  margin: 0;
+  line-height: 1.15;
+}
+
+p { margin: 0 0 1em 0; }
+
+a {
+  color: var(--brass);
+  text-decoration: none;
+  transition: color 200ms ease-out, letter-spacing 200ms ease-out;
+}
+a:hover {
+  color: var(--brass-hi);
+  letter-spacing: 0.02em;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+::selection {
+  background: var(--brass);
+  color: var(--bg-mahogany);
+}
+
+/* ----------------------- Signature Patterns ----------------------- */
+
+/* Arch-top border radius — cathedral window / library alcove */
+.arch-top {
+  border-radius: var(--radius-arch-top);
+  overflow: hidden;
+}
+
+/* Ornate corner frame — large brass L-brackets on the major frames */
+.ornate-frame {
+  position: relative;
+}
+.ornate-frame::before,
+.ornate-frame::after {
+  content: "";
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--brass);
+  pointer-events: none;
+  transition: opacity 300ms ease-out;
+}
+.ornate-frame::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+.ornate-frame::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+/* Subtle corner flourishes for cards (24px brackets) */
+.corner-flourish {
+  position: relative;
+}
+.corner-flourish::before,
+.corner-flourish::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--brass);
+  opacity: 0.6;
+  transition: opacity 300ms ease-out;
+  pointer-events: none;
+}
+.corner-flourish::before {
+  top: 6px;
+  left: 6px;
+  border-right: none;
+  border-bottom: none;
+}
+.corner-flourish::after {
+  bottom: 6px;
+  right: 6px;
+  border-left: none;
+  border-top: none;
+}
+.corner-flourish:hover::before,
+.corner-flourish:hover::after,
+.ornate-frame:hover::before,
+.ornate-frame:hover::after {
+  opacity: 1;
+}
+
+/* Ornate divider — gradient line + centered glyph */
+.ornate-divider {
+  position: relative;
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--border-wood) 20%,
+    var(--brass) 50%,
+    var(--border-wood) 80%,
+    transparent 100%);
+  margin: 1.5rem 0;
+  border: none;
+}
+.ornate-divider::before {
+  content: "\2726"; /* heavy four-pointed star, can be overridden */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  color: var(--brass);
+  font-size: 14px;
+  background: var(--bg-mahogany);
+  padding: 0 14px;
+  line-height: 1;
+}
+/* Variant glyphs the page may opt into via data-glyph attribute */
+.ornate-divider[data-glyph="leaf"]::before   { content: "\2767"; } /* ❧ */
+.ornate-divider[data-glyph="flower"]::before { content: "\2766"; } /* ❦ */
+.ornate-divider[data-glyph="star"]::before   { content: "\2736"; } /* ✶ */
+.ornate-divider[data-glyph="diamond"]::before{ content: "\2724"; } /* ✤ */
+
+/* Volume label — Cinzel, uppercase, brass, wide tracking */
+.volume-label {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+  color: var(--brass);
+  margin: 0 0 0.5rem 0;
+}
+
+/* Section title (Cormorant Garamond, large) */
+.section-title {
+  font-family: var(--font-heading);
+  font-size: 1.6rem;
+  font-weight: 500;
+  color: var(--fg-parchment);
+  letter-spacing: 0.005em;
+  margin: 0 0 0.75rem 0;
+}
+
+/* Subtitle / description under a section title */
+.section-subtitle {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--muted-ink);
+  font-style: italic;
+  margin: 0 0 0.5rem 0;
+}
+
+/* Drop cap — Cinzel, brass, engraved shadow */
+.drop-cap::first-letter {
+  font-family: var(--font-display);
+  font-size: 4.5rem;
+  float: left;
+  margin: 0.05em 0.5rem 0 0;
+  line-height: 0.8;
+  color: var(--brass);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.30),
+              -1px -1px 1px rgba(255, 255, 255, 0.10);
+}
+
+/* Engraved text effect — pressed-into-metal */
+.engraved {
+  text-shadow:
+    1px 1px 1px rgba(0, 0, 0, 0.40),
+    -1px -1px 1px rgba(255, 255, 255, 0.10);
+}
+
+/* Monospace utility (hex dump, base64, console, word table) */
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0;
+}
+
+/* ----------------------- Layout helpers ----------------------- */
+.container-wide {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+@media (min-width: 640px) { .container-wide { padding: 0 1.5rem; } }
+@media (min-width: 1024px) { .container-wide { padding: 0 2rem; } }
+
+.container-narrow {
+  max-width: 896px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+/* Section rhythm */
+.section {
+  padding: 1.5rem 0;
+}
+@media (min-width: 768px) {
+  .section { padding: 2rem 0; }
+}
+
+/* Responsive grid — 2-column on lg, stack on mobile */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+@media (min-width: 1024px) {
+  .grid-2 {
+    grid-template-columns: 2fr 1fr;
+  }
+}
+
+/* Wax-seal badge (used sparingly for "new" / "featured" items) */
+.wax-seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #B5344A 0%, var(--crimson) 45%, var(--crimson-deep) 100%);
+  color: var(--crimson-fg);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  box-shadow: var(--shadow-wax-seal);
+  position: absolute;
+  top: -12px;
+  right: 24px;
+}
+
+/* Sepia-to-color transition for arch-top images */
+.sepia-reveal {
+  filter: sepia(0.6) contrast(0.95) brightness(0.9);
+  transition: filter 700ms ease-out, transform 700ms ease-out;
+}
+.sepia-reveal:hover {
+  filter: sepia(0) contrast(1) brightness(1);
+  transform: scale(1.05);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus ring — brass, with mahogany offset for accessibility */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-mahogany), 0 0 0 4px var(--brass);
+  border-radius: var(--radius-default);
+}
+
+/* Scrollbar — slim, mahogany/oak themed */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-mahogany);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-wood);
+  border-radius: 4px;
+  border: 2px solid var(--bg-mahogany);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--brass-lo);
+}
+
+/* ----------------------- Header (sticky, sticky-to-top) ----------------------- */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(28, 23, 20, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-wood);
+}
+.site-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0;
+}
+.site-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+.site-header__logo {
+  width: 48px;
+  height: 56px; /* arch-top ratio */
+  flex-shrink: 0;
+  transition: transform 300ms ease-out;
+}
+.site-header__logo:hover {
+  transform: scale(1.05);
+}
+.site-header__title {
+  font-family: var(--font-heading);
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-parchment);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.site-header__title .ver {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--brass);
+  padding: 2px 6px;
+  border: 1px solid var(--brass);
+  border-radius: var(--radius-default);
+  background: rgba(201, 169, 98, 0.08);
+}
+.site-header__subtitle {
+  font-family: var(--font-body);
+  font-size: 1.0rem;
+  color: var(--muted-ink);
+  font-style: italic;
+  margin: 0;
+  line-height: 1.35;
+}
+@media (max-width: 640px) {
+  .site-header__subtitle { display: none; }
+  .site-header__title { font-size: 1.15rem; }
+}
+
+/* ----------------------- Footer (sticky to bottom) ----------------------- */
+.site-footer {
+  border-top: 1px solid var(--border-wood);
+  background: rgba(28, 23, 20, 0.95);
+  margin-top: auto;
+}
+.site-footer__inner {
+  padding: 0.85rem 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted-ink);
+}
+.site-footer__inner p {
+  margin: 0;
+  line-height: 1.6;
+}
+.site-footer__inner .accent { color: var(--brass); }
+
+/* ----------------------- Loading progress card ----------------------- */
+.loading-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+.loading-card .spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border-wood);
+  border-top-color: var(--brass);
+  border-right-color: var(--brass);
+  border-radius: 50%;
+  animation: academia-spin 1.1s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes academia-spin {
+  to { transform: rotate(360deg); }
+}
+.loading-card .spinner-label {
+  font-family: var(--font-body);
+  color: var(--fg-parchment);
+  font-size: 0.95rem;
+}
+.loading-card .spinner-sub {
+  font-family: var(--font-body);
+  color: var(--muted-ink);
+  font-size: 0.82rem;
+  font-style: italic;
+  margin-top: 0.25rem;
+}

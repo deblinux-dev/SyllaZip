@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>SZGC — минималистичное демо (запасное)</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 22px; }
+  textarea { width: 100%; box-sizing: border-box; height: 110px; font: inherit; padding: 10px; border: 1px solid #bbb; border-radius: 8px; }
+  button { font: inherit; padding: 8px 18px; border-radius: 8px; border: 1px solid #888; background: #f6f6f6; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: #777; min-height: 1.4em; }
+  table { border-collapse: collapse; margin-top: 12px; width: 100%; }
+  td, th { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+  .win { color: #0a7d32; font-weight: 600; }
+  .lose { color: #b03020; }
+  code { background: #f4f4f4; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>SZGC</h1>
+Модель загружается один раз, всё сжатие/распаковка идут локально,
+офлайн и детерминированно.</p>
+<p><textarea id="text">Привет! Как дела?
+Не забудь купить хлеб и молоко.
+Сегодня мы пошли в кино. Завтра мы пошли в театр.</textarea></p>
+<p><button id="go" disabled>Загрузка модели…</button>
+<span id="status">инициализация…</span></p>
+<table id="tbl" hidden>
+  <tr><th>Кодек</th><th>Размер</th><th>К исходному</th></tr>
+</table>
+<p id="rt"></p>
+<script src="szgc.js"></script>
+<script>
+const tbl = document.getElementById('tbl');
+const status = document.getElementById('status');
+const btn = document.getElementById('go');
+
+// модель лежит в корне проекта; пробуем оба варианта пути
+const urls = ['../graph-model.bin', './graph-model.bin', './model/graph-model.bin'];
+(function tryFetch(i) {
+  if (i >= urls.length) {
+    status.textContent = 'не найден graph-model.bin — запустите http-сервер из корня проекта: python3 -m http.server';
+    return;
+  }
+  fetch(urls[i])
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(buf => {
+      SZGC.loadModel(new Uint8Array(buf));
+      status.textContent = 'модель загружена';
+      btn.disabled = false;
+      btn.textContent = 'Сжать';
+    })
+    .catch(() => tryFetch(i + 1));
+})(0);
+
+btn.onclick = () => {
+  const t = document.getElementById('text').value;
+  const raw = new TextEncoder().encode(t).length;
+  const blob = SZGC.compress(t);
+  const back = SZGC.decompress(blob);
+  const ok = back === t;
+  const rows = [['исходный', raw, 100], ['SZGC', blob.length, 100 * blob.length / raw]];
+  tbl.hidden = false;
+  tbl.innerHTML = '<tr><th>Кодек</th><th>Размер</th><th>К исходному</th></tr>' +
+    rows.map(([n, s, p]) => `<tr><td>${n}</td><td>${s} Б</td><td>${p.toFixed(0)}%</td></tr>`).join('');
+  document.getElementById('rt').innerHTML = ok
+    ? '<span class="win">round-trip OK</span>'
+    : '<span class="lose">round-trip FAIL</span>';
+};
+</script>
+</body>
+</html>
