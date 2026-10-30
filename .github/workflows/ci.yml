@@ -81,17 +81,22 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Install cargo-zigbuild (linux aarch64)
         if: matrix.zigbuild
+        shell: bash
         run: |
           pip3 install ziglang
           cargo install --locked cargo-zigbuild
-      - name: Build
+      # Общий шаг для всех ОС: на windows-latest по умолчанию PowerShell,
+      # а синтаксис здесь bash — поэтому shell задаётся явно.
+      - name: Build (zigbuild)
+        if: matrix.zigbuild
         working-directory: rust
-        run: |
-          if [ "${{ matrix.zigbuild }}" = "true" ]; then
-            cargo zigbuild --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+        shell: bash
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+      - name: Build
+        if: ${{ !matrix.zigbuild }}
+        working-directory: rust
+        shell: bash
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
