@@ -28,7 +28,7 @@
   <a href="#обучение-в-google-colab"><img src="./assets/badges/colab.svg" height="24" alt="обучение собственной модели в Google Colab"></a>
 </p>
 
-[Демо](https://deblinux-dev.github.io/Syllazip) ·
+[Демо](https://deblinux-dev.github.io/SyllaZip) ·
 [Бенчмарк](BENCHMARK.md) ·
 [Спецификация](SPEC.md) ·
 [Обучение в Colab](#обучение-в-google-colab) ·
