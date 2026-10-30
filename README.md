@@ -16,7 +16,7 @@
   ![Python](https://img.shields.io/badge/Python-3.10+-8B4513?style=flat-square&logo=python&logoColor=white)
   ![Rust](https://img.shields.io/badge/Rust-1.70+-8B4513?style=flat-square&logo=rust&logoColor=white)
   ![JavaScript](https://img.shields.io/badge/JavaScript-ES6+-8B4513?style=flat-square&logo=javascript&logoColor=white)
-  <a href="https://deblinux-dev.github.io/Syllazip"><img src="https://img.shields.io/badge/Web_Demo-Live-8B4513?style=flat-square&logo=react&logoColor=white" height="20" alt="версия 1.0.0"></a>
+  <a href="https://deblinux-dev.github.io/SyllaZip/"><img src="https://img.shields.io/badge/Web_Demo-Live-8B4513?style=flat-square&logo=react&logoColor=white" height="20" alt="версия 1.0.0"></a>
   ![SZGC](https://img.shields.io/badge/SZGC-Core-8B4513?style=flat-square)
   ![License](https://img.shields.io/badge/License-MIT-8B4513?style=flat-square)
 
@@ -375,7 +375,7 @@ python3 -m http.server 8000
 ```
 
 Онлайн-версия публикуется на GitHub Pages —
-[https://deblinux-dev.github.io/Syllazip/](https://deblinux-dev.github.io/Syllazip/)
+[https://deblinux-dev.github.io/SyllaZip/](https://deblinux-dev.github.io/SyllaZip/)
 
 ### Готовые бинарники (GitHub Actions)
 
@@ -391,7 +391,7 @@ python3 -m http.server 8000
 
 Каждый архив содержит статический бинарник `szgc` со встроенной моделью — скачал и работаешь без установки чего-либо.
 
-**Releases**: [https://deblinux-dev.github.io/Syllazip/releases](https://deblinux-dev.github.io/Syllazip/releases)
+**Releases**: [https://deblinux-dev.github.io/SyllaZip/releases](https://deblinux-dev.github.io/SyllaZip/releases)
 
 ---
 
