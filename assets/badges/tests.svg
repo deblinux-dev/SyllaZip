@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="291.6" height="30" viewBox="0 0 291.6 30" role="img" aria-label="36 эталонных векторов и 150 текстов кросс-проверки">
-  <title>36 эталонных векторов и 150 текстов кросс-проверки</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="291.6" height="30" viewBox="0 0 291.6 30" role="img" aria-label="31 эталонный вектор и 150 текстов кросс-проверки">
+  <title>31 эталонный вектор и 150 текстов кросс-проверки</title>
   <defs>
     <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#D4B872"/>
@@ -18,6 +18,6 @@
     <rect x="4" y="1" width="283.6" height="1" fill="#FFFFFF" opacity="0.07"/>
     <line x1="71.2" y1="0" x2="71.2" y2="30" stroke="#1C1714" stroke-opacity="0.55"/>
     <text x="11" y="19.1" font-size="10.5" font-weight="bold" letter-spacing="1.4" fill="#1C1714">ТЕСТЫ</text>
-    <text x="81.2" y="19.1" font-size="11.5" letter-spacing="0.7" fill="#E8DFD4">36 ВЕКТОРОВ · 150 ТЕКСТОВ</text>
+    <text x="81.2" y="19.1" font-size="11.5" letter-spacing="0.7" fill="#E8DFD4">31 ВЕКТОР · 150 ТЕКСТОВ</text>
   </g>
 </svg>

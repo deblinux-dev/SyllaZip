@@ -589,13 +589,13 @@ impl<'a> Szgc<'a> {
         }
     }
 
-    fn est_ft_o0(acc: &mut i64, ft: &FenwickO0, sym: i64, excl: &mut HashSet<i64>) -> bool {
+    fn est_ft_o0(acc: &mut i64, ft: &FenwickO0, sym: i64, excl: &mut HashSet<i64>, ctx: u8) -> bool {
         if ft.in_table(sym, Some(excl)) {
-            let (cum, freq, tot) = ft.find_encode(sym, Some(excl));
+            let (cum, freq, tot) = ft.find_encode(sym, Some(excl), ctx);
             Self::est_bits(acc, cum, freq, tot);
             true
         } else {
-            let (cum, freq, tot) = ft.find_encode(ESC_RANK, Some(excl));
+            let (cum, freq, tot) = ft.find_encode(ESC_RANK, Some(excl), ctx);
             Self::est_bits(acc, cum, freq, tot);
             false
         }
@@ -685,9 +685,17 @@ impl<'a> Szgc<'a> {
     }
 
 
+    fn o0_ctx(&self) -> u8 {
+        match self.w1 {
+            None => 0,
+            Some(w1) => self.m.word_lang[(w1 - self.m.p as u64) as usize],
+        }
+    }
+
     fn est_chain(&mut self, sym: i64, flag: i64, pred: Option<u64>, r: u64) -> i64 {
         let mut acc = 0i64;
         let mut excl: HashSet<i64> = HashSet::new();
+        let octx = self.o0_ctx();
         if let Some(p) = pred {
             let (cum, freq, tot) = self.lzp_flag.find_encode(Some(0), None);
             Self::est_bits(&mut acc, cum, freq, tot);
@@ -722,7 +730,7 @@ impl<'a> Szgc<'a> {
                 break;
             }
         }
-        if !hit && !Self::est_ft_o0(&mut acc, &self.m.st_o0, sym, &mut excl) {
+        if !hit && !Self::est_ft_o0(&mut acc, &self.m.st_o0, sym, &mut excl, octx) {
             // cost is intentionally not counted (state-warming call, mirror of Python)
             let mut h = self.bhist.clone();
             self.est_varint(r, &mut h);
@@ -778,7 +786,7 @@ impl<'a> Szgc<'a> {
             None => {}
         }
         if !hit {
-            let (cum, freq, tot) = self.m.st_o0.find_encode(pidx as i64, None);
+            let (cum, freq, tot) = self.m.st_o0.find_encode(pidx as i64, None, 0);
             Self::est_bits(&mut acc, cum, freq, tot);
         }
         acc
@@ -1056,14 +1064,15 @@ impl<'a> Szgc<'a> {
                         if !done {
                             let in_o0 = self.m.st_o0.bset.contains(&(sym as i64))
                                 && !excl.contains(&(sym as i64));
+                            let ctx = self.o0_ctx();
                             if in_o0 {
                                 let (cum, freq, tot) =
-                                    self.m.st_o0.find_encode(sym as i64, Some(&excl));
+                                    self.m.st_o0.find_encode(sym as i64, Some(&excl), ctx);
                                 enc.encode(cum, freq, tot);
                                 self.m.st_o0.adapt(sym as i64);
                             } else {
                                 let (cum, freq, tot) =
-                                    self.m.st_o0.find_encode(ESC_RANK, Some(&excl));
+                                    self.m.st_o0.find_encode(ESC_RANK, Some(&excl), ctx);
                                 enc.encode(cum, freq, tot);
                                 self.m.st_o0.adapt(ESC_RANK);
                                 self.enc_varint(&mut enc, r as u64);
@@ -1153,7 +1162,7 @@ impl<'a> Szgc<'a> {
                             }
                             if !done {
                                 let (cum, freq, tot) =
-                                    self.m.st_o0.find_encode(pidx as i64, None);
+                                    self.m.st_o0.find_encode(pidx as i64, None, 0);
                                 enc.encode(cum, freq, tot);
                                 self.m.st_o0.adapt(pidx as i64);
                                 self.touch(TId::O0);
@@ -1316,9 +1325,10 @@ impl<'a> Szgc<'a> {
                     }
                 }
                 if found.is_none() {
-                    let tot = self.m.st_o0.total_excl(Some(&excl));
+                    let octx = self.o0_ctx();
+                    let tot = self.m.st_o0.total_excl(Some(&excl), octx);
                     let cum = dec.start(tot)?;
-                    let (s, lo, freq) = self.m.st_o0.decode_sym(cum, Some(&excl));
+                    let (s, lo, freq) = self.m.st_o0.decode_sym(cum, Some(&excl), octx);
                     dec.finish(lo, freq);
                     self.touch(TId::O0);
                     if s == ESC_RANK {
@@ -1414,9 +1424,9 @@ impl<'a> Szgc<'a> {
                 let sym: i64 = match sym {
                     Some(s) => s,
                     None => {
-                        let tot = self.m.st_o0.total();
+                        let tot = self.m.st_o0.total(0);
                         let cum = dec.start(tot)?;
-                        let (s, lo, freq) = self.m.st_o0.decode_sym(cum, None);
+                        let (s, lo, freq) = self.m.st_o0.decode_sym(cum, None, 0);
                         dec.finish(lo, freq);
                         self.m.st_o0.adapt(s);
                         self.touch(TId::O0);

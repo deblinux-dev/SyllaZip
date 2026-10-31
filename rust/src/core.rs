@@ -9,6 +9,7 @@ pub const RESIZE: i64 = 32768;
 pub const CTX_CAP: i64 = 192;
 pub const ESC_RANK: i64 = -1;
 pub const ESC_LIT: i64 = -2;
+pub const O0_SPLIT: i64 = 32;   // контекстный буст языка в O0 (0 = выкл)
 pub const W_MATCH: i64 = 4096;
 pub const ESC_MATCH: i64 = 384;
 pub const PAIR_SHIFT: u32 = 21;
@@ -570,19 +571,52 @@ pub struct FenwickO0 {
     esc_lit0: i64,
     extra: HashMap<i64, i64>,
     adds: Vec<(usize, i64)>,
+    lang: Vec<u8>,
+    split: i64,
+    tree_cyr: Vec<i64>,
+    tree_lat: Vec<i64>,
+}
+
+fn tadd(tree: &mut [i64], i: usize, v: i64) {
+    let n = tree.len() - 1;
+    let mut i = i;
+    while i <= n {
+        tree[i] += v;
+        i += i & i.wrapping_neg();
+    }
+}
+
+fn tpref(tree: &[i64], i: usize) -> i64 {
+    let mut s = 0i64;
+    let mut i = i;
+    while i > 0 {
+        s += tree[i];
+        i -= i & i.wrapping_neg();
+    }
+    s
 }
 
 impl FenwickO0 {
-    pub fn new(syms: Vec<i64>, weights: Vec<i64>, esc_rank: i64, esc_lit: i64) -> FenwickO0 {
+    pub fn new(syms: Vec<i64>, weights: Vec<i64>, esc_rank: i64, esc_lit: i64,
+               langs: Vec<u8>, split: i64) -> FenwickO0 {
         let n = syms.len();
         let pos: HashMap<i64, usize> = syms.iter().copied().enumerate().map(|(i, s)| (s, i)).collect();
         let raw_tot: i64 = weights.iter().sum();
         let mut tree = vec![0i64; n + 1];
         for (i, w) in weights.iter().enumerate() {
-            let mut j = i + 1;
-            while j <= n {
-                tree[j] += w;
-                j += j & j.wrapping_neg();
+            tadd(&mut tree, i + 1, *w);
+        }
+        let lang = if langs.len() == n { langs } else { vec![0u8; n] };
+        let split = if split != 0 && lang.len() == n { split } else { 0 };
+        let mut tree_cyr = vec![0i64; n + 1];
+        let mut tree_lat = vec![0i64; n + 1];
+        if split != 0 {
+            for i in 0..n {
+                if lang[i] == 1 {
+                    tadd(&mut tree_cyr, i + 1, weights[i]);
+                } else if lang[i] == 2 {
+                    tadd(&mut tree_lat, i + 1, weights[i]);
+                }
             }
         }
         FenwickO0 {
@@ -598,26 +632,19 @@ impl FenwickO0 {
             esc_lit0: esc_lit,
             extra: HashMap::new(),
             adds: Vec::new(),
+            lang,
+            split,
+            tree_cyr,
+            tree_lat,
         }
     }
 
     fn tree_add(&mut self, i: usize, v: i64) {
-        let n = self.tree.len() - 1;
-        let mut i = i;
-        while i <= n {
-            self.tree[i] += v;
-            i += i & i.wrapping_neg();
-        }
+        tadd(&mut self.tree, i, v);
     }
 
     fn prefix(&self, i: usize) -> i64 {
-        let mut s = 0i64;
-        let mut i = i;
-        while i > 0 {
-            s += self.tree[i];
-            i -= i & i.wrapping_neg();
-        }
-        s
+        tpref(&self.tree, i)
     }
 
     fn w_of(&self, s: i64) -> i64 {
@@ -633,11 +660,59 @@ impl FenwickO0 {
         items
     }
 
-    fn excl_below(items: &[(usize, i64)], idx: usize) -> i64 {
+    // --- контекстное взвешивание: язык цели совпал с языком w1 -> вес x split ---
+    fn eff(&self, ctx: u8) -> (i64, i64, i64) {
+        if self.split == 0 || ctx == 0 {
+            return (self.raw_tot, self.esc_rank, self.esc_lit);
+        }
+        let t = if ctx == 1 { &self.tree_cyr } else { &self.tree_lat };
+        let body = self.raw_tot + (self.split - 1) * tpref(t, self.bs.len());
+        let k = body / self.raw_tot;
+        (body, self.esc_rank * k, self.esc_lit * k)
+    }
+
+    fn we(&self, idx: usize, w: i64, ctx: u8) -> i64 {
+        if ctx != 0 && self.split != 0 && self.lang[idx] == ctx {
+            w * self.split
+        } else {
+            w
+        }
+    }
+
+    fn prefix_eff(&self, i: usize, ctx: u8) -> i64 {
+        let p = tpref(&self.tree, i);
+        if self.split == 0 || ctx == 0 {
+            return p;
+        }
+        let t = if ctx == 1 { &self.tree_cyr } else { &self.tree_lat };
+        p + (self.split - 1) * tpref(t, i)
+    }
+
+    fn excl_eff_sum(&self, items: &[(usize, i64)], ctx: u8) -> i64 {
+        if self.split == 0 || ctx == 0 || items.is_empty() {
+            return items.iter().map(|x| x.1).sum();
+        }
+        items
+            .iter()
+            .map(|&(pi, w)| if self.lang[pi] == ctx { w * self.split } else { w })
+            .sum()
+    }
+
+    fn excl_eff_below(&self, items: &[(usize, i64)], idx: usize, ctx: u8) -> i64 {
         let mut s = 0i64;
+        if self.split == 0 || ctx == 0 {
+            for &(pi, w) in items {
+                if pi < idx {
+                    s += w;
+                } else {
+                    break;
+                }
+            }
+            return s;
+        }
         for &(pi, w) in items {
             if pi < idx {
-                s += w;
+                s += if self.lang[pi] == ctx { w * self.split } else { w };
             } else {
                 break;
             }
@@ -645,15 +720,18 @@ impl FenwickO0 {
         s
     }
 
-    pub fn total(&self) -> i64 {
-        self.raw_tot + self.esc_rank + self.esc_lit
+    pub fn total(&self, ctx: u8) -> i64 {
+        let (body, escr, escl) = self.eff(ctx);
+        body + escr + escl
     }
 
-    pub fn total_excl(&self, excl: Option<&HashSet<i64>>) -> i64 {
+    pub fn total_excl(&self, excl: Option<&HashSet<i64>>, ctx: u8) -> i64 {
+        let (body, escr, escl) = self.eff(ctx);
+        let base = body + escr + escl;
         match excl {
-            None => self.total(),
-            Some(e) if e.is_empty() => self.total(),
-            Some(e) => self.total() - e.iter().filter(|s| self.pos.contains_key(s)).map(|s| self.w_of(*s)).sum::<i64>(),
+            None => base,
+            Some(e) if e.is_empty() => base,
+            Some(e) => base - self.excl_eff_sum(&self.excl_sorted(e), ctx),
         }
     }
 
@@ -668,6 +746,14 @@ impl FenwickO0 {
         let adds = std::mem::take(&mut self.adds);
         for &(idx, v) in &adds {
             self.tree_add(idx + 1, -v);
+            if self.split != 0 {
+                let lg = self.lang[idx];
+                if lg == 1 {
+                    tadd(&mut self.tree_cyr, idx + 1, -v);
+                } else if lg == 2 {
+                    tadd(&mut self.tree_lat, idx + 1, -v);
+                }
+            }
             self.raw_tot -= v;
         }
         self.extra.clear();
@@ -684,6 +770,14 @@ impl FenwickO0 {
             let w = self.extra.get(&sym).copied().unwrap_or(0);
             if w < 60000 {
                 self.tree_add(idx + 1, ADAPT);
+                if self.split != 0 {
+                    let lg = self.lang[idx];
+                    if lg == 1 {
+                        tadd(&mut self.tree_cyr, idx + 1, ADAPT);
+                    } else if lg == 2 {
+                        tadd(&mut self.tree_lat, idx + 1, ADAPT);
+                    }
+                }
                 self.raw_tot += ADAPT;
                 self.adds.push((idx, ADAPT));
                 self.extra.insert(sym, w + ADAPT);
@@ -692,79 +786,50 @@ impl FenwickO0 {
     }
 
     /// (cum, freq, tot); for ESC_RANK/ESC_LIT — tail intervals.
-    pub fn find_encode(&self, sym: i64, excl: Option<&HashSet<i64>>) -> (i64, i64, i64) {
-        let items;
-        let excl_sum;
-        match excl {
-            None => {
-                items = Vec::new();
-                excl_sum = 0;
-            }
-            Some(e) if e.is_empty() => {
-                items = Vec::new();
-                excl_sum = 0;
-            }
-            Some(e) => {
-                items = self.excl_sorted(e);
-                excl_sum = items.iter().map(|x| x.1).sum();
-            }
+    pub fn find_encode(&self, sym: i64, excl: Option<&HashSet<i64>>, ctx: u8) -> (i64, i64, i64) {
+        let items = match excl {
+            Some(e) if !e.is_empty() => self.excl_sorted(e),
+            _ => Vec::new(),
+        };
+        let (body, escr, escl) = self.eff(ctx);
+        let base = body - self.excl_eff_sum(&items, ctx);
+        let tot = base + escr + escl;
+        if sym == ESC_RANK {
+            return (base, escr, tot);
         }
-        if sym == ESC_RANK || sym == ESC_LIT {
-            let base = self.raw_tot - excl_sum;
-            let tot = base + self.esc_rank + self.esc_lit;
-            if sym == ESC_RANK {
-                return (base, self.esc_rank, tot);
-            }
-            return (base + self.esc_rank, self.esc_lit, tot);
+        if sym == ESC_LIT {
+            return (base + escr, escl, tot);
         }
         match self.pos.get(&sym) {
-            None => {
-                let base = self.raw_tot - excl_sum;
-                (base, self.esc_rank, base + self.esc_rank + self.esc_lit)
-            }
-            Some(&idx) if matches!(excl, Some(e) if e.contains(&sym)) => {
-                let _ = idx;
-                let base = self.raw_tot - excl_sum;
-                (base, self.esc_rank, base + self.esc_rank + self.esc_lit)
-            }
+            None => (base, escr, tot),
+            Some(&idx) if matches!(excl, Some(e) if e.contains(&sym)) => (base, escr, tot),
             Some(&idx) => {
                 let w = self.w_of(sym);
-                let cum = self.prefix(idx) - Self::excl_below(&items, idx);
-                let tot = self.raw_tot - excl_sum + self.esc_rank + self.esc_lit;
-                (cum, w, tot)
+                let freq = self.we(idx, w, ctx);
+                let cum = self.prefix_eff(idx, ctx) - self.excl_eff_below(&items, idx, ctx);
+                (cum, freq, tot)
             }
         }
     }
 
     /// (sym, lo, freq); sym = ESC_RANK/ESC_LIT for escape intervals.
-    pub fn decode_sym(&self, cum: i64, excl: Option<&HashSet<i64>>) -> (i64, i64, i64) {
-        let items;
-        let excl_sum;
-        match excl {
-            None => {
-                items = Vec::new();
-                excl_sum = 0;
-            }
-            Some(e) if e.is_empty() => {
-                items = Vec::new();
-                excl_sum = 0;
-            }
-            Some(e) => {
-                items = self.excl_sorted(e);
-                excl_sum = items.iter().map(|x| x.1).sum();
-            }
-        }
-        let base_tot = self.raw_tot - excl_sum;
+    pub fn decode_sym(&self, cum: i64, excl: Option<&HashSet<i64>>, ctx: u8) -> (i64, i64, i64) {
+        let items = match excl {
+            Some(e) if !e.is_empty() => self.excl_sorted(e),
+            _ => Vec::new(),
+        };
+        let (body, escr, escl) = self.eff(ctx);
+        let base_tot = body - self.excl_eff_sum(&items, ctx);
         if cum >= base_tot {
-            if cum < base_tot + self.esc_rank {
-                return (ESC_RANK, base_tot, self.esc_rank);
+            if cum < base_tot + escr {
+                return (ESC_RANK, base_tot, escr);
             }
-            return (ESC_LIT, base_tot + self.esc_rank, self.esc_lit);
+            return (ESC_LIT, base_tot + escr, escl);
         }
         let (mut lo, mut hi) = (0usize, self.bs.len() - 1);
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let ap = self.prefix(mid + 1) - Self::excl_below(&items, mid + 1);
+            let ap = self.prefix_eff(mid + 1, ctx) - self.excl_eff_below(&items, mid + 1, ctx);
             if ap > cum {
                 hi = mid;
             } else {
@@ -774,8 +839,9 @@ impl FenwickO0 {
         let idx = lo;
         let s = self.bs[idx];
         let w = self.w_of(s);
-        let lo_cum = self.prefix(idx) - Self::excl_below(&items, idx);
-        (s, lo_cum, w)
+        let freq = self.we(idx, w, ctx);
+        let lo_cum = self.prefix_eff(idx, ctx) - self.excl_eff_below(&items, idx, ctx);
+        (s, lo_cum, freq)
     }
 }
 
@@ -802,6 +868,7 @@ pub struct Model {
     pub l: usize,
     pub puncts: Vec<String>,
     pub words: Vec<String>,
+    pub word_lang: Vec<u8>,
     pub rank: HashMap<String, u32>,
     pub lemma_ids: Vec<u64>,
     pub st_o0: FenwickO0,
@@ -833,6 +900,28 @@ fn rows_from(r: &mut Reader) -> Result<HashMap<u64, FT>, String> {
         d.insert(k, FT::simple(syms, ws, 40));
     }
     Ok(d)
+}
+
+/// 0=смешанный/прочий, 1=кириллица, 2=латиница (по алфавиту словоформы).
+pub fn word_lang_of(w: &str) -> u8 {
+    let mut lat = false;
+    let mut cyr = false;
+    for ch in w.chars() {
+        match ch {
+            'a'..='z' => lat = true,
+            'а'..='я' | 'ё' => cyr = true,
+            _ => return 0,
+        }
+    }
+    if lat && cyr {
+        0
+    } else if lat {
+        2
+    } else if cyr {
+        1
+    } else {
+        0
+    }
 }
 
 impl Model {
@@ -875,7 +964,18 @@ impl Model {
         }
         let esc_rank = r.varint() as i64;
         let esc_lit = r.varint() as i64;
-        let st_o0 = FenwickO0::new(syms, ws, esc_rank, esc_lit);
+        let word_lang: Vec<u8> = words.iter().map(|w| word_lang_of(w)).collect();
+        let o0_langs: Vec<u8> = syms
+            .iter()
+            .map(|&s| {
+                if s < p_sz as i64 {
+                    0
+                } else {
+                    word_lang[(s - p_sz as i64) as usize]
+                }
+            })
+            .collect();
+        let st_o0 = FenwickO0::new(syms, ws, esc_rank, esc_lit, o0_langs, O0_SPLIT);
         let b1 = rows_from(&mut r)?;
         let b2 = rows_from(&mut r)?;
         let lem = rows_from(&mut r)?;
@@ -927,6 +1027,7 @@ impl Model {
             l,
             puncts,
             words,
+            word_lang,
             rank,
             lemma_ids,
             st_o0,

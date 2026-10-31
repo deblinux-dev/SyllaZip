@@ -34,19 +34,44 @@ STATS = os.path.join(BASE, "download/syllazip/model-stats.json")
 FREQ_RU = os.path.join(BASE, "scripts/ru_50k.txt")
 FREQ_EN = os.path.join(BASE, "scripts/en_50k.txt")
 
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
 # ---- модельные ёмкости ----
 PUNCT_TOP = 48
-O0_TOP = 65536
-DICT_CAP = 600000
-CTX_B1_ROWS = 65536
-B2_ROWS = 65536
-LEM_ROWS = 16384
-A_ROWS = 16384
+O0_TOP = _env_int("SZGC_O0_TOP", 131072)
+DICT_CAP = _env_int("SZGC_DICT_CAP", 600000)
+CTX_B1_ROWS = _env_int("SZGC_B1_ROWS", 65536)
+B2_ROWS = _env_int("SZGC_B2_ROWS", 65536)
+LEM_ROWS = _env_int("SZGC_LEM_ROWS", 16384)
+A_ROWS = _env_int("SZGC_A_ROWS", 16384)
 B1_KEEP, B2_KEEP, LEM_KEEP, A_KEEP, C_KEEP = 14, 9, 12, 4, 8
 B1_MIN_CNT, B2_MIN_CNT, LEM_MIN_CNT, A_MIN_CNT = 40, 20, 30, 40
 TOTAL_CAP = 3_000_000_000   # корпус до ~3 ГБ (RU+EN)
 PAIR_SUBSAMPLE = 2          # брать каждую 2-ю пару (по счётчику)
 ROW_TARGET = 1500           # суммарный вес статической строки контекста
+
+# ---- английский контур: строки добавляются СВЕРХ русских квот ----
+# (0 отключает соответствующую ручку; дефолты включены)
+B2_EN_ADD = _env_int("SZGC_B2_EN_ADD", 32768)     # доп. en-en пары B2 сверх топа
+B2_EN_MIN = _env_int("SZGC_B2_EN_MIN", 4)         # минимальный счёт доп. пары
+B1_EN_ADD = _env_int("SZGC_B1_EN_ADD", 16384)     # доп. EN-слова в B1 сверх топа
+A_EN_ADD = _env_int("SZGC_A_EN_ADD", 8192)        # доп. EN-слова в A сверх топа
+LEM_EN_OFF = _env_int("SZGC_LEM_EN_OFF", 2)       # 2=убрать латинские леммы без дозаполнения, 1=с дозаполнением, 0=выкл
+B1_KEEP_EN = _env_int("SZGC_B1_KEEP_EN", 32)      # глубина EN-строк B1
+B2_KEEP_EN = _env_int("SZGC_B2_KEEP_EN", 16)      # глубина EN-строк B2
+OUT = os.environ.get("SZGC_OUT", OUT)
+STATS = os.environ.get("SZGC_STATS", STATS)
+
+_LAT_W = re.compile(r"^[a-z]+$")
+
+
+def is_latin(w):
+    return _LAT_W.match(w) is not None
 
 
 def read_freq_lists():
@@ -233,7 +258,7 @@ def build_lemmas(ranked):
 
 
 # ============================================================== PASS 2
-def pass2(files, word_cnt, rank_of, P):
+def pass2(files, word_cnt, rank_of, P, lang_by_rank=None):
     """Пары (w2,w1) SYM-ов слов (как в кодеке); parity-субсэмпл."""
     t0 = time.time()
     buf = np.empty(1 << 23, dtype=np.int64)
@@ -276,6 +301,21 @@ def pass2(files, word_cnt, rank_of, P):
     pairs = set(int(uniq[i]) for i in order)
     print("  P2: уникальных пар %d, отобрано %d (порог счёта >= %d)" %
           (len(uniq), len(pairs), int(counts[order[-1]]) if len(order) else 0), flush=True)
+    # аддитивные en-en пары: сверх топа, русские строки не затрагиваются
+    if B2_EN_ADD and lang_by_rank is not None:
+        w1s = (uniq & ((1 << 21) - 1)).astype(np.int64)
+        w2s = (uniq >> 21).astype(np.int64)
+        en1 = lang_by_rank[w1s - P] == 2
+        en2 = lang_by_rank[w2s - P] == 2
+        cand = np.nonzero(en1 & en2 & (counts >= B2_EN_MIN))[0]
+        top = set(int(x) for x in uniq[order])
+        cand = np.array([i for i in cand if int(uniq[i]) not in top], dtype=np.int64)
+        if len(cand) > B2_EN_ADD:
+            # сортировка: счёт по убыванию, при равенстве — меньший ключ пары
+            cand = cand[np.lexsort((uniq[cand], -counts[cand]))[:B2_EN_ADD]]
+        added = set(int(uniq[i]) for i in cand)
+        pairs |= added
+        print("  P2: доп. en-en пар %d (счёт >= %d)" % (len(added), B2_EN_MIN), flush=True)
     return pairs
 
 
@@ -403,14 +443,35 @@ def stage2():
     lemma_ids, L = build_lemmas(ranked)
     print("лемм L=%d (%.0fs)" % (L, time.time() - t00))
     lemma_agg = Counter()
+    latin_lem = set()
     for i, li in enumerate(lemma_ids):
         lemma_agg[li] += cnt.get(ranked[i], 0)
-    lem_ctx = set(li for li, c in lemma_agg.items() if c >= LEM_MIN_CNT)
-    lem_ctx = set(sorted(lem_ctx, key=lambda x: -lemma_agg[x])[:LEM_ROWS])
+        if is_latin(ranked[i]):
+            latin_lem.add(li)
+    if LEM_EN_OFF == 2:
+        # убрать латинские леммы без дозаполнения: русский набор строк
+        # в точности как в смешанном топе, глубокие леммы не подмешиваются
+        cand = [li for li, c in lemma_agg.items() if c >= LEM_MIN_CNT]
+        sel = sorted(cand, key=lambda x: (-lemma_agg[x], x))[:LEM_ROWS]
+        lem_ctx = set(li for li in sel if li not in latin_lem)
+    else:
+        if LEM_EN_OFF:
+            for li in list(lemma_agg):
+                if li in latin_lem:
+                    del lemma_agg[li]
+        lem_ctx = set(li for li, c in lemma_agg.items() if c >= LEM_MIN_CNT)
+        lem_ctx = set(sorted(lem_ctx, key=lambda x: -lemma_agg[x])[:LEM_ROWS])
     freq_words = [(w, c) for w, c in cnt.items() if c >= B1_MIN_CNT]
     freq_words.sort(key=lambda t: (-t[1], t[0]))
     b1_ctx = set(P + rank_of[w] for w, _ in freq_words[:CTX_B1_ROWS] if w in rank_of)
     a_ctx = set(P + rank_of[w] for w, _ in freq_words[:A_ROWS] if w in rank_of)
+    # аддитивные EN-контексты: сверх топа, русские строки не затрагиваются
+    if B1_EN_ADD:
+        add = [w for w, _ in freq_words[CTX_B1_ROWS:] if is_latin(w)][:B1_EN_ADD]
+        b1_ctx |= set(P + rank_of[w] for w in add if w in rank_of)
+    if A_EN_ADD:
+        add = [w for w, _ in freq_words[A_ROWS:] if is_latin(w)][:A_EN_ADD]
+        a_ctx |= set(P + rank_of[w] for w in add if w in rank_of)
     print("контекстов: b1=%d lem=%d a=%d" % (len(b1_ctx), len(lem_ctx), len(a_ctx)))
     with open(os.path.join(STAGE_DIR, "stage2.pkl"), "wb") as f:
         pickle.dump({"ranked": ranked, "puncts": puncts, "lemma_ids": lemma_ids,
@@ -431,7 +492,8 @@ def stage3():
     files, _ = corpus_files()
     with open(os.path.join(STAGE_DIR, "stage2.pkl"), "rb") as f:
         P = len(pickle.load(f)["puncts"])
-    pairs = pass2(files, cnt, rank_of, P)
+    lang_by_rank = np.array([2 if is_latin(w) else 0 for w in ranked], dtype=np.int8)
+    pairs = pass2(files, cnt, rank_of, P, lang_by_rank)
     import numpy as _np
     arr = _np.array(sorted(pairs), dtype=_np.int64)
     _np.save(os.path.join(STAGE_DIR, "pairs.npy"), arr)
@@ -470,6 +532,7 @@ def pack_model(cnt, ru_freq, ranked, puncts, lemma_ids, L, lem_ctx, b1_ctx, a_ct
     D = len(ranked)
     P = len(puncts)
     rank_of = {w: i for i, w in enumerate(ranked)}
+    latin_rank = set(i for i, w in enumerate(ranked) if is_latin(w))
     print("== упаковка модели ==")
     out = bytearray()
     out += b"SZGM"
@@ -514,7 +577,8 @@ def pack_model(cnt, ru_freq, ranked, puncts, lemma_ids, L, lem_ctx, b1_ctx, a_ct
     for ctx in sorted(b1_ctx):
         c = b1.get(ctx)
         if c and len(c) >= 2:
-            rows.append((ctx, scale_weights(dict(c.most_common(B1_KEEP)))))
+            keep = B1_KEEP_EN if (ctx - P) in latin_rank else B1_KEEP
+            rows.append((ctx, scale_weights(dict(c.most_common(keep)))))
     wv(len(rows))
     for ctx, w in rows:
         wv(ctx); wv(len(w))
@@ -527,7 +591,8 @@ def pack_model(cnt, ru_freq, ranked, puncts, lemma_ids, L, lem_ctx, b1_ctx, a_ct
     for pr in sorted(pairs):
         c = b2.get(pr)
         if c and (len(c) >= 2 or sum(c.values()) >= 3):
-            rows.append((pr, scale_weights(dict(c.most_common(B2_KEEP)))))
+            keep = B2_KEEP_EN if ((pr & ((1 << 21) - 1)) - P) in latin_rank else B2_KEEP
+            rows.append((pr, scale_weights(dict(c.most_common(keep)))))
     wv(len(rows))
     for pr, w in rows:
         wv(pr); wv(len(w))

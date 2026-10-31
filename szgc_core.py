@@ -15,6 +15,7 @@ RESIZE = 32768
 CTX_CAP = 192
 ESC_RANK = -1
 ESC_LIT = -2
+O0_SPLIT = int(os.environ.get("SZGC_O0_SPLIT", "32"))   # контекстный буст языка (0=выкл)
 W_MATCH, ESC_MATCH = 4096, 384
 PAIR_SHIFT = 21
 W_LZP_HIT, W_LZP_MISS = 4096, 128      # флаг попытки LZP (адаптируется)
@@ -25,6 +26,21 @@ MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "graph-model.bin")
 
 ABSENT = object()
+
+_LAT = frozenset("abcdefghijklmnopqrstuvwxyz")
+_CYR = frozenset("абвгдеёжзийклмнопрстуфхцчшщъыьэюя")
+
+
+def word_lang(w):
+    """0=смешанный/прочий, 1=кириллица, 2=латиница (по алфавиту словоформы)."""
+    if not w:
+        return 0
+    s = set(w)
+    if s <= _LAT:
+        return 2
+    if s <= _CYR:
+        return 1
+    return 0
 
 
 def apply_case(w, f):
@@ -245,7 +261,7 @@ class FT:
             return True
         return False
 
-    def find_encode(self, sym, excl=None):
+    def find_encode(self, sym, excl=None, ctx=0):
         """(cum, freq, tot) с учётом исключений; ESC-интервал, если sym нет."""
         lo = 0
         found = False
@@ -365,13 +381,21 @@ class FenwickO0:
 
     API совместим с FT для ролей, нужных кодеку: find_encode/decode_sym/
     total/total_excl/in_table/adapt/reset + bset. ESC_RANK/ESC_LIT живут
-    вне дерева (два хвостовых интервала)."""
+    вне дерева (два хвостовых интервала).
+
+    Контекстное взвешивание (split): если язык кодируемого символа совпадает
+    с языком предыдущего слова (ctx=1 кириллица / 2 латиница / 0 прочее),
+    вес символа умножается на split. ESC-интервалы масштабируются так, чтобы
+    их вероятность не зависела от контекста. Два доп. дерева Фенвика по
+    языкам дают префиксные суммы с множителем за O(log n). Только целые
+    числа — байт-в-байт во всех реализациях."""
 
     __slots__ = ("bs", "bweight", "pos", "bset", "tree", "raw_tot",
                  "esc_rank", "esc_lit", "esc_rank0", "esc_lit0",
-                 "extra", "adds", "delta")
+                 "extra", "adds", "delta", "lang", "split",
+                 "tree_cyr", "tree_lat")
 
-    def __init__(self, syms, weights, esc_rank=0, esc_lit=0):
+    def __init__(self, syms, weights, esc_rank=0, esc_lit=0, langs=None, split=0):
         self.bs = list(syms)
         self.bweight = list(weights)
         self.pos = {s: i for i, s in enumerate(self.bs)}
@@ -379,7 +403,7 @@ class FenwickO0:
         n = len(self.bs)
         self.tree = [0] * (n + 1)
         for i, w in enumerate(self.bweight):
-            self._tree_add(i + 1, w)
+            self._tadd(self.tree, i + 1, w)
         self.raw_tot = sum(self.bweight)
         self.esc_rank = esc_rank
         self.esc_lit = esc_lit
@@ -388,22 +412,38 @@ class FenwickO0:
         self.extra = {}
         self.adds = []
         self.delta = {}          # совместимость (не используется)
+        self.lang = list(langs) if langs else [0] * n
+        self.split = split if (split and len(self.lang) == n) else 0
+        self.tree_cyr = [0] * (n + 1)
+        self.tree_lat = [0] * (n + 1)
+        if self.split:
+            for i, lg in enumerate(self.lang):
+                if lg == 1:
+                    self._tadd(self.tree_cyr, i + 1, self.bweight[i])
+                elif lg == 2:
+                    self._tadd(self.tree_lat, i + 1, self.bweight[i])
 
-    def _tree_add(self, i, v):
-        tree = self.tree
+    @staticmethod
+    def _tadd(tree, i, v):
         n = len(tree) - 1
         while i <= n:
             tree[i] += v
             i += i & (-i)
 
-    def _prefix(self, i):
+    @staticmethod
+    def _tpref(tree, i):
         """Сумма весов позиций 1..i (i — 1-based)."""
         s = 0
-        tree = self.tree
         while i > 0:
             s += tree[i]
             i -= i & (-i)
         return s
+
+    def _tree_add(self, i, v):
+        self._tadd(self.tree, i, v)
+
+    def _prefix(self, i):
+        return self._tpref(self.tree, i)
 
     # --- служебные ---
     def _w_of(self, s):
@@ -428,15 +468,65 @@ class FenwickO0:
     def _w(self, s):
         return self.bweight[self.pos[s]] + self.extra.get(s, 0)
 
-    # --- API ---
-    def total(self):
-        return self.raw_tot + self.esc_rank + self.esc_lit
+    # --- контекстное взвешивание ---
+    def _eff(self, ctx):
+        """(тело, esc_rank, esc_lit) с множителем языка ctx."""
+        if not self.split or ctx == 0:
+            return self.raw_tot, self.esc_rank, self.esc_lit
+        t = self.tree_cyr if ctx == 1 else self.tree_lat
+        body = self.raw_tot + (self.split - 1) * self._tpref(t, len(self.bs))
+        k = body // self.raw_tot
+        return body, self.esc_rank * k, self.esc_lit * k
 
-    def total_excl(self, excl):
+    def _we(self, idx, w, ctx):
+        """Эффективный вес позиции idx в контексте ctx."""
+        if ctx and self.split and self.lang[idx] == ctx:
+            return w * self.split
+        return w
+
+    def _prefix_eff(self, i, ctx):
+        p = self._tpref(self.tree, i)
+        if not self.split or ctx == 0:
+            return p
+        t = self.tree_cyr if ctx == 1 else self.tree_lat
+        return p + (self.split - 1) * self._tpref(t, i)
+
+    def _excl_eff_sum(self, items, ctx):
+        if not self.split or ctx == 0 or not items:
+            return sum(w for _, w in items)
+        s = 0
+        for idx, w in items:
+            s += w * self.split if self.lang[idx] == ctx else w
+        return s
+
+    def _excl_eff_below(self, items, idx, ctx):
+        """Сумма эффективных весов исключённых с позицией < idx (idx 1-based)."""
+        s = 0
+        if not self.split or ctx == 0:
+            for pi, w in items:
+                if pi < idx:
+                    s += w
+                else:
+                    break
+            return s
+        for pi, w in items:
+            if pi < idx:
+                s += w * self.split if self.lang[pi] == ctx else w
+            else:
+                break
+        return s
+
+    # --- API ---
+    def total(self, ctx=0):
+        body, escr, escl = self._eff(ctx)
+        return body + escr + escl
+
+    def total_excl(self, excl, ctx=0):
+        body, escr, escl = self._eff(ctx)
         if not excl:
-            return self.total()
-        s = sum(self._w(x) for x in excl if x in self.pos)
-        return self.total() - s
+            return body + escr + escl
+        s = self._excl_eff_sum(self._excl_sorted(excl), ctx)
+        return body + escr + escl - s
 
     def in_table(self, sym, excl=None):
         if sym in self.bset:
@@ -445,7 +535,13 @@ class FenwickO0:
 
     def reset(self):
         for idx, v in self.adds:
-            self._tree_add(idx + 1, -v)
+            self._tadd(self.tree, idx + 1, -v)
+            if self.split:
+                lg = self.lang[idx]
+                if lg == 1:
+                    self._tadd(self.tree_cyr, idx + 1, -v)
+                elif lg == 2:
+                    self._tadd(self.tree_lat, idx + 1, -v)
             self.raw_tot -= v
         self.adds.clear()
         self.extra.clear()
@@ -461,49 +557,54 @@ class FenwickO0:
             w = self.extra.get(sym, 0)
             if w < 60000:
                 idx = self.pos[sym]
-                self._tree_add(idx + 1, ADAPT)
+                self._tadd(self.tree, idx + 1, ADAPT)
+                if self.split:
+                    lg = self.lang[idx]
+                    if lg == 1:
+                        self._tadd(self.tree_cyr, idx + 1, ADAPT)
+                    elif lg == 2:
+                        self._tadd(self.tree_lat, idx + 1, ADAPT)
                 self.raw_tot += ADAPT
                 self.adds.append((idx, ADAPT))
                 self.extra[sym] = w + ADAPT
         return self
 
-    def find_encode(self, sym, excl=None):
+    def find_encode(self, sym, excl=None, ctx=0):
         """(cum, freq, tot); для ESC_RANK/ESC_LIT — хвостовые интервалы."""
         items = self._excl_sorted(excl) if excl else ()
-        excl_sum = sum(w for _, w in items)
-        if sym == ESC_RANK or sym == ESC_LIT:
-            base = self.raw_tot - excl_sum
-            tot = base + self.esc_rank + self.esc_lit
-            if sym == ESC_RANK:
-                return base, self.esc_rank, tot
-            return base + self.esc_rank, self.esc_lit, tot
+        body, escr, escl = self._eff(ctx)
+        base = body - self._excl_eff_sum(items, ctx)
+        tot = base + escr + escl
+        if sym == ESC_RANK:
+            return base, escr, tot
+        if sym == ESC_LIT:
+            return base + escr, escl, tot
         if sym not in self.pos or (excl and sym in excl):
             # в кодеке не встречается (проверяется in_table/bset заранее);
             # деградируем в ESC-интервал, как линейный FT
-            base = self.raw_tot - excl_sum
-            return base, self.esc_rank, base + self.esc_rank + self.esc_lit
+            return base, escr, tot
         idx = self.pos[sym]
         w = self._w_of(sym)
-        cum = self._prefix(idx) - self._excl_below(items, idx)
-        tot = self.raw_tot - excl_sum + self.esc_rank + self.esc_lit
-        return cum, w, tot
+        freq = self._we(idx, w, ctx)
+        cum = self._prefix_eff(idx, ctx) - self._excl_eff_below(items, idx, ctx)
+        return cum, freq, tot
 
-    def decode_sym(self, cum, excl=None):
+    def decode_sym(self, cum, excl=None, ctx=0):
         """(sym|None, lo, freq); None = escape (ESC_RANK/ESC_LIT как None-
         ветка: возвращаем псевдосимвол)."""
         items = self._excl_sorted(excl) if excl else ()
-        excl_sum = sum(w for _, w in items)
-        base_tot = self.raw_tot - excl_sum
+        body, escr, escl = self._eff(ctx)
+        base_tot = body - self._excl_eff_sum(items, ctx)
         if cum >= base_tot:
-            if cum < base_tot + self.esc_rank:
-                return ESC_RANK, base_tot, self.esc_rank
-            return ESC_LIT, base_tot + self.esc_rank, self.esc_lit
+            if cum < base_tot + escr:
+                return ESC_RANK, base_tot, escr
+            return ESC_LIT, base_tot + escr, escl
         # бинарный поиск позиции: adj_prefix(p) > cum,
         # adj_prefix(p) = сумма весов позиций 0..p минус исключённые 0..p
         lo, hi = 0, len(self.bs) - 1
         while lo < hi:
             mid = (lo + hi) // 2
-            ap = self._prefix(mid + 1) - self._excl_below(items, mid + 1)
+            ap = self._prefix_eff(mid + 1, ctx) - self._excl_eff_below(items, mid + 1, ctx)
             if ap > cum:
                 hi = mid
             else:
@@ -511,8 +612,9 @@ class FenwickO0:
         idx = lo
         s = self.bs[idx]
         w = self._w_of(s)
-        lo_cum = self._prefix(idx) - self._excl_below(items, idx)
-        return s, lo_cum, w
+        freq = self._we(idx, w, ctx)
+        lo_cum = self._prefix_eff(idx, ctx) - self._excl_eff_below(items, idx, ctx)
+        return s, lo_cum, freq
 
 
 class Model:
@@ -532,6 +634,7 @@ class Model:
         self.puncts = [r.blob().decode("utf-8") for _ in range(self.P)]
         self.words = [r.blob().decode("utf-8") for _ in range(self.D)]
         self.rank = {w: i for i, w in enumerate(self.words)}
+        self.word_lang = [word_lang(w) for w in self.words]
         self.lemma_ids = [r.varint() for _ in range(self.D)]
         n0 = r.varint()
         syms, ws = [], []
@@ -540,7 +643,8 @@ class Model:
             ws.append(r.varint())
         esc_rank = r.varint()
         esc_lit = r.varint()
-        self.st_o0 = FenwickO0(syms, ws, esc_rank, esc_lit)
+        o0_langs = [0 if s < self.P else self.word_lang[s - self.P] for s in syms]
+        self.st_o0 = FenwickO0(syms, ws, esc_rank, esc_lit, o0_langs, O0_SPLIT)
         self.b1 = self._rows(r)
         self.b2 = self._rows(r)
         self.lem = self._rows(r)

@@ -17,7 +17,7 @@
   "xz9e": 116,
   "br11": 51,
   "zstd19": 59,
-  "szgc": 19,
+  "szgc": 20,
   "name": "base02",
   "rt": true
  },
@@ -28,7 +28,7 @@
   "xz9e": 128,
   "br11": 60,
   "zstd19": 72,
-  "szgc": 26,
+  "szgc": 27,
   "name": "base03",
   "rt": true
  },
@@ -39,7 +39,7 @@
   "xz9e": 144,
   "br11": 76,
   "zstd19": 82,
-  "szgc": 59,
+  "szgc": 48,
   "name": "base04",
   "rt": true
  },
@@ -50,7 +50,7 @@
   "xz9e": 164,
   "br11": 86,
   "zstd19": 103,
-  "szgc": 41,
+  "szgc": 37,
   "name": "base05",
   "rt": true
  },
@@ -61,7 +61,7 @@
   "xz9e": 1708,
   "br11": 1100,
   "zstd19": 1587,
-  "szgc": 1480,
+  "szgc": 1035,
   "name": "en_2026",
   "rt": true
  },
@@ -72,7 +72,7 @@
   "xz9e": 2488,
   "br11": 1740,
   "zstd19": 2386,
-  "szgc": 2269,
+  "szgc": 1716,
   "name": "en_quantum",
   "rt": true
  },
@@ -83,7 +83,7 @@
   "xz9e": 2284,
   "br11": 2013,
   "zstd19": 2291,
-  "szgc": 1399,
+  "szgc": 1443,
   "name": "ru_2026",
   "rt": true
  },
@@ -94,7 +94,7 @@
   "xz9e": 1592,
   "br11": 1286,
   "zstd19": 1588,
-  "szgc": 943,
+  "szgc": 981,
   "name": "ru_space_tourism",
   "rt": true
  },
@@ -105,7 +105,7 @@
   "xz9e": 2620,
   "br11": 2304,
   "zstd19": 2635,
-  "szgc": 1838,
+  "szgc": 1721,
   "name": "ru_wc2026",
   "rt": true
  },
@@ -182,7 +182,7 @@
   "xz9e": 188,
   "br11": 95,
   "zstd19": 126,
-  "szgc": 86,
+  "szgc": 87,
   "name": "noise07",
   "rt": true
  },
@@ -226,7 +226,7 @@
   "xz9e": 188,
   "br11": 89,
   "zstd19": 113,
-  "szgc": 79,
+  "szgc": 80,
   "name": "noise11",
   "rt": true
  },
@@ -325,7 +325,7 @@
   "xz9e": 176,
   "br11": 82,
   "zstd19": 105,
-  "szgc": 77,
+  "szgc": 78,
   "name": "noise20",
   "rt": true
  }

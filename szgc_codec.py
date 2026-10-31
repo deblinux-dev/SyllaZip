@@ -336,15 +336,15 @@ class SZGC2:
         if freq > 0:
             acc[0] += (tot.bit_length() - freq.bit_length()) * 256
 
-    def _est_ft(self, acc, ft, sym, excl):
+    def _est_ft(self, acc, ft, sym, excl, ctx=0):
         """Оценка кодирования sym в ft; False = escape (excl пополняется)."""
         if ft is None:
             return False
         if ft.in_table(sym, excl):
-            cum, freq, tot = ft.find_encode(sym, excl)
+            cum, freq, tot = ft.find_encode(sym, excl, ctx)
             self._est_bits(acc, cum, freq, tot)
             return True
-        cum, freq, tot = ft.find_encode(None, excl)
+        cum, freq, tot = ft.find_encode(None, excl, ctx)
         self._est_bits(acc, cum, freq, tot)
         if excl is not None:
             excl.update(ft.bs)
@@ -407,6 +407,7 @@ class SZGC2:
         """Оценка словарной цепочки для слова (escape-каскад + case)."""
         acc = [0]
         excl = set()
+        ctx = self._o0_ctx()
         if pred is not None:
             t = self.lzp_flag
             cum, freq, tot = t.find_encode(0)
@@ -414,12 +415,12 @@ class SZGC2:
             excl.add(pred)
         hit = False
         for ft, tag in self._word_tables():
-            if self._est_ft(acc, ft, sym, excl):
+            if self._est_ft(acc, ft, sym, excl, ctx):
                 hit = True
                 break
         if not hit:
             o0 = self.m.st_o0
-            if not self._est_ft(acc, o0, sym, excl):
+            if not self._est_ft(acc, o0, sym, excl, ctx):
                 self._est_varint(r, list(self.bhist))
         t = self.m.st_case[self._case_ctx()]
         cum, freq, tot = t.find_encode(flag)
@@ -464,6 +465,12 @@ class SZGC2:
         return acc[0]
 
     # ------------------------------------------------------- word chain
+    def _o0_ctx(self):
+        """Язык предыдущего слова: 1 кириллица / 2 латиница / 0 прочее."""
+        if self.w1 is None:
+            return 0
+        return self.m.word_lang[self.w1 - self.m.P]
+
     def _word_tables(self):
         """Упорядоченный список (ft, tag) попыток для слова."""
         m = self.m
@@ -621,12 +628,13 @@ class SZGC2:
                         excl.update(ft.delta.keys())
                     if not done:
                         o0 = m.st_o0
+                        ctx = self._o0_ctx()
                         if sym in o0.bset and sym not in excl:
-                            cum, freq, tot = o0.find_encode(sym, excl)
+                            cum, freq, tot = o0.find_encode(sym, excl, ctx)
                             enc.encode(cum, freq, tot)
                             o0.adapt(sym, insert=False)
                         else:
-                            cum, freq, tot = o0.find_encode(ESC_RANK, excl)
+                            cum, freq, tot = o0.find_encode(ESC_RANK, excl, ctx)
                             enc.encode(cum, freq, tot)
                             o0.adapt(ESC_RANK, insert=False)
                             self._enc_varint(enc, r)
@@ -790,8 +798,9 @@ class SZGC2:
                 r = None
                 if sym is None:
                     o0 = m.st_o0
-                    cum = dec.start(o0.total_excl(excl))
-                    s, lo, freq = o0.decode_sym(cum, excl)
+                    ctx = self._o0_ctx()
+                    cum = dec.start(o0.total_excl(excl, ctx))
+                    s, lo, freq = o0.decode_sym(cum, excl, ctx)
                     dec.finish(lo, freq)
                     self.m.touched.add(o0)
                     if s == ESC_RANK:

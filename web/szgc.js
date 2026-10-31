@@ -22,6 +22,7 @@
   var ESC_RANK = -1;
   var ESC_LIT = -2;
   var W_MATCH = 4096, ESC_MATCH = 384;
+  var O0_SPLIT = 32;                // контекстный буст языка в O0 (0 = выкл)
   var PAIR_SHIFT = 21;
   var W_LZP_HIT = 4096, W_LZP_MISS = 128;
   var B_ESC = 12, B_ASTEP = 48;
@@ -176,7 +177,7 @@
     return false;
   };
 
-  FT.prototype.findEncode = function (sym, excl) {
+  FT.prototype.findEncode = function (sym, excl, ctx) {
     var lo = 0, found = false, freq = 0, cum = 0, i, s, w;
     var bs = this.bs, bw = this.bw, delta = this.delta;
     for (i = 0; i < bs.length; i++) {
@@ -200,7 +201,7 @@
     return [tot - this.esc, this.esc, tot];
   };
 
-  FT.prototype.decodeSym = function (cum, excl) {
+  FT.prototype.decodeSym = function (cum, excl, ctx) {
     var lo = 0, i, s, w;
     var bs = this.bs, bw = this.bw, delta = this.delta;
     for (i = 0; i < bs.length; i++) {
@@ -273,7 +274,7 @@
   };
 
   // --------------------------------------------------------- FenwickO0
-  function FenwickO0(syms, weights, escRank, escLit) {
+  function FenwickO0(syms, weights, escRank, escLit, langs, split) {
     this.bs = syms.slice();
     this.bweight = weights.slice();
     this.pos = new Map();
@@ -281,7 +282,7 @@
     this.bset = new Set(this.bs);
     var n = this.bs.length;
     this.tree = new Float64Array(n + 1);   // суммы < 2^53, целые точно
-    for (i = 0; i < this.bweight.length; i++) this._treeAdd(i + 1, this.bweight[i]);
+    for (i = 0; i < this.bweight.length; i++) this._tadd(this.tree, i + 1, this.bweight[i]);
     var raw = 0;
     for (i = 0; i < this.bweight.length; i++) raw += this.bweight[i];
     this.rawTot = raw;
@@ -292,17 +293,35 @@
     this.extra = new Map();
     this.adds = [];
     this.delta = new Map();          // совместимость с FT-API (пустая, как в Python)
+    this.lang = langs ? langs.slice() : new Array(n).fill(0);
+    this.split = (split && this.lang.length === n) ? split : 0;
+    this.treeCyr = new Float64Array(n + 1);
+    this.treeLat = new Float64Array(n + 1);
+    if (this.split) {
+      for (i = 0; i < n; i++) {
+        if (this.lang[i] === 1) this._tadd(this.treeCyr, i + 1, this.bweight[i]);
+        else if (this.lang[i] === 2) this._tadd(this.treeLat, i + 1, this.bweight[i]);
+      }
+    }
   }
 
-  FenwickO0.prototype._treeAdd = function (i, v) {
-    var tree = this.tree, n = this.tree.length - 1;
+  FenwickO0.prototype._tadd = function (tree, i, v) {
+    var n = tree.length - 1;
     while (i <= n) { tree[i] += v; i += i & (-i); }
   };
 
-  FenwickO0.prototype._prefix = function (i) {
-    var s = 0, tree = this.tree;
+  FenwickO0.prototype._tpref = function (tree, i) {
+    var s = 0;
     while (i > 0) { s += tree[i]; i -= i & (-i); }
     return s;
+  };
+
+  FenwickO0.prototype._treeAdd = function (i, v) {
+    this._tadd(this.tree, i, v);
+  };
+
+  FenwickO0.prototype._prefix = function (i) {
+    return this._tpref(this.tree, i);
   };
 
   FenwickO0.prototype._wOf = function (s) {
@@ -318,24 +337,66 @@
     return items;
   };
 
-  FenwickO0.prototype._exclBelow = function (items, idx) {
-    var s = 0;
-    for (var i = 0; i < items.length; i++) {
-      if (items[i][0] < idx) s += items[i][1];
-      else break;
+  // --- контекстное взвешивание: язык цели совпал с языком w1 -> вес x split ---
+  FenwickO0.prototype._eff = function (ctx) {
+    if (!this.split || !ctx) return [this.rawTot, this.escRank, this.escLit];
+    var t = ctx === 1 ? this.treeCyr : this.treeLat;
+    var body = this.rawTot + (this.split - 1) * this._tpref(t, this.bs.length);
+    var k = Math.floor(body / this.rawTot);
+    return [body, this.escRank * k, this.escLit * k];
+  };
+
+  FenwickO0.prototype._we = function (idx, w, ctx) {
+    if (ctx && this.split && this.lang[idx] === ctx) return w * this.split;
+    return w;
+  };
+
+  FenwickO0.prototype._prefixEff = function (i, ctx) {
+    var p = this._tpref(this.tree, i);
+    if (!this.split || !ctx) return p;
+    var t = ctx === 1 ? this.treeCyr : this.treeLat;
+    return p + (this.split - 1) * this._tpref(t, i);
+  };
+
+  FenwickO0.prototype._exclEffSum = function (items, ctx) {
+    var s = 0, i;
+    if (!this.split || !ctx || !items.length) {
+      for (i = 0; i < items.length; i++) s += items[i][1];
+      return s;
+    }
+    for (i = 0; i < items.length; i++) {
+      s += this.lang[items[i][0]] === ctx ? items[i][1] * this.split : items[i][1];
     }
     return s;
   };
 
-  FenwickO0.prototype.total = function () {
-    return this.rawTot + this.escRank + this.escLit;
+  FenwickO0.prototype._exclEffBelow = function (items, idx, ctx) {
+    var s = 0, i;
+    if (!this.split || !ctx) {
+      for (i = 0; i < items.length; i++) {
+        if (items[i][0] < idx) s += items[i][1];
+        else break;
+      }
+      return s;
+    }
+    for (i = 0; i < items.length; i++) {
+      if (items[i][0] < idx) {
+        s += this.lang[items[i][0]] === ctx ? items[i][1] * this.split : items[i][1];
+      } else break;
+    }
+    return s;
   };
 
-  FenwickO0.prototype.totalExcl = function (excl) {
-    if (!excl || excl.size === 0) return this.total();
-    var self = this, s = 0;
-    excl.forEach(function (x) { if (self.pos.has(x)) s += self._wOf(x); });
-    return this.total() - s;
+  FenwickO0.prototype.total = function (ctx) {
+    var e = this._eff(ctx || 0);
+    return e[0] + e[1] + e[2];
+  };
+
+  FenwickO0.prototype.totalExcl = function (excl, ctx) {
+    var e = this._eff(ctx || 0);
+    if (!excl || excl.size === 0) return e[0] + e[1] + e[2];
+    var s = this._exclEffSum(this._exclSorted(excl), ctx || 0);
+    return e[0] + e[1] + e[2] - s;
   };
 
   FenwickO0.prototype.inTable = function (sym, excl) {
@@ -346,7 +407,12 @@
   FenwickO0.prototype.reset = function () {
     for (var i = 0; i < this.adds.length; i++) {
       var idx = this.adds[i][0], v = this.adds[i][1];
-      this._treeAdd(idx + 1, -v);
+      this._tadd(this.tree, idx + 1, -v);
+      if (this.split) {
+        var lg = this.lang[idx];
+        if (lg === 1) this._tadd(this.treeCyr, idx + 1, -v);
+        else if (lg === 2) this._tadd(this.treeLat, idx + 1, -v);
+      }
       this.rawTot -= v;
     }
     this.adds.length = 0;
@@ -364,7 +430,12 @@
       var w = this.extra.has(sym) ? this.extra.get(sym) : 0;
       if (w < 60000) {
         var idx = this.pos.get(sym);
-        this._treeAdd(idx + 1, ADAPT);
+        this._tadd(this.tree, idx + 1, ADAPT);
+        if (this.split) {
+          var lg = this.lang[idx];
+          if (lg === 1) this._tadd(this.treeCyr, idx + 1, ADAPT);
+          else if (lg === 2) this._tadd(this.treeLat, idx + 1, ADAPT);
+        }
         this.rawTot += ADAPT;
         this.adds.push([idx, ADAPT]);
         this.extra.set(sym, w + ADAPT);
@@ -373,51 +444,66 @@
     return this;
   };
 
-  FenwickO0.prototype.findEncode = function (sym, excl) {
+  FenwickO0.prototype.findEncode = function (sym, excl, ctx) {
+    ctx = ctx || 0;
     var items = excl ? this._exclSorted(excl) : [];
-    var exclSum = 0, i;
-    for (i = 0; i < items.length; i++) exclSum += items[i][1];
-    if (sym === ESC_RANK || sym === ESC_LIT) {
-      var base = this.rawTot - exclSum;
-      var tot = base + this.escRank + this.escLit;
-      if (sym === ESC_RANK) return [base, this.escRank, tot];
-      return [base + this.escRank, this.escLit, tot];
-    }
+    var e = this._eff(ctx);
+    var body = e[0], escr = e[1], escl = e[2];
+    var base = body - this._exclEffSum(items, ctx);
+    var tot = base + escr + escl;
+    if (sym === ESC_RANK) return [base, escr, tot];
+    if (sym === ESC_LIT) return [base + escr, escl, tot];
     if (!this.pos.has(sym) || (excl && excl.has(sym))) {
-      var b0 = this.rawTot - exclSum;
-      return [b0, this.escRank, b0 + this.escRank + this.escLit];
+      return [base, escr, tot];
     }
     var idx = this.pos.get(sym);
     var w = this._wOf(sym);
-    var cum = this._prefix(idx) - this._exclBelow(items, idx);
-    var t = this.rawTot - exclSum + this.escRank + this.escLit;
-    return [cum, w, t];
+    var freq = this._we(idx, w, ctx);
+    var cum = this._prefixEff(idx, ctx) - this._exclEffBelow(items, idx, ctx);
+    return [cum, freq, tot];
   };
 
-  FenwickO0.prototype.decodeSym = function (cum, excl) {
+  FenwickO0.prototype.decodeSym = function (cum, excl, ctx) {
+    ctx = ctx || 0;
     var items = excl ? this._exclSorted(excl) : [];
-    var exclSum = 0, i;
-    for (i = 0; i < items.length; i++) exclSum += items[i][1];
-    var baseTot = this.rawTot - exclSum;
+    var e = this._eff(ctx);
+    var body = e[0], escr = e[1], escl = e[2];
+    var baseTot = body - this._exclEffSum(items, ctx);
     if (cum >= baseTot) {
-      if (cum < baseTot + this.escRank) return [ESC_RANK, baseTot, this.escRank];
-      return [ESC_LIT, baseTot + this.escRank, this.escLit];
+      if (cum < baseTot + escr) return [ESC_RANK, baseTot, escr];
+      return [ESC_LIT, baseTot + escr, escl];
     }
     var lo = 0, hi = this.bs.length - 1;
     while (lo < hi) {
       var mid = (lo + hi) >> 1;
-      var ap = this._prefix(mid + 1) - this._exclBelow(items, mid + 1);
+      var ap = this._prefixEff(mid + 1, ctx) - this._exclEffBelow(items, mid + 1, ctx);
       if (ap > cum) hi = mid;
       else lo = mid + 1;
     }
     var idx = lo;
     var s = this.bs[idx];
     var w = this._wOf(s);
-    var loCum = this._prefix(idx) - this._exclBelow(items, idx);
-    return [s, loCum, w];
+    var freq = this._we(idx, w, ctx);
+    var loCum = this._prefixEff(idx, ctx) - this._exclEffBelow(items, idx, ctx);
+    return [s, loCum, freq];
   };
 
   // --------------------------------------------------------- utf8 helpers
+  function wordLangOf(w) {
+    if (!w) return 0;
+    var lat = false, cyr = false;
+    for (var i = 0; i < w.length; i++) {
+      var c = w.charCodeAt(i);
+      if (c >= 97 && c <= 122) lat = true;
+      else if (c === 0x451 || (c >= 0x430 && c <= 0x44F)) cyr = true;
+      else return 0;
+    }
+    if (lat && cyr) return 0;
+    if (lat) return 2;
+    if (cyr) return 1;
+    return 0;
+  }
+
   var TE = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
   var TD = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8") : null;
 
@@ -495,6 +581,8 @@
     for (i = 0; i < this.D; i++) this.words[i] = utf8Decode(r.blob());
     this.rank = new Map();
     for (i = 0; i < this.D; i++) this.rank.set(this.words[i], i);
+    this.wordLang = new Uint8Array(this.D);
+    for (i = 0; i < this.D; i++) this.wordLang[i] = wordLangOf(this.words[i]);
     this.lemmaIds = new Array(this.D);
     for (i = 0; i < this.D; i++) this.lemmaIds[i] = r.varint();
     // order-0
@@ -502,7 +590,9 @@
     var syms = new Array(n0), ws = new Array(n0);
     for (i = 0; i < n0; i++) { syms[i] = r.varint(); ws[i] = r.varint(); }
     var escRank = r.varint(), escLit = r.varint();
-    this.stO0 = new FenwickO0(syms, ws, escRank, escLit);
+    this.stO0 = new FenwickO0(syms, ws, escRank, escLit,
+      syms.map(function (s) { return s < this.P ? 0 : this.wordLang[s - this.P]; }, this),
+      O0_SPLIT);
     this.b1 = this._rows(r);
     this.b2 = this._rows(r);
     this.lem = this._rows(r);
@@ -884,14 +974,19 @@
     if (freq > 0) acc[0] += (bitLength(tot) - bitLength(freq)) * 256;
   };
 
-  SZGC2.prototype._estFt = function (acc, ft, sym, excl) {
+  SZGC2.prototype._o0Ctx = function () {
+    if (this.w1 === null) return 0;
+    return this.m.wordLang[this.w1 - this.m.P];
+  };
+
+  SZGC2.prototype._estFt = function (acc, ft, sym, excl, ctx) {
     if (ft === null || ft === undefined) return false;
     if (ft.inTable(sym, excl)) {
-      var r = ft.findEncode(sym, excl);
+      var r = ft.findEncode(sym, excl, ctx);
       this._estBits(acc, r[0], r[1], r[2]);
       return true;
     }
-    var re = ft.findEncode(null, excl);
+    var re = ft.findEncode(null, excl, ctx);
     this._estBits(acc, re[0], re[1], re[2]);
     if (excl) {
       var self = this;
@@ -983,6 +1078,7 @@
   SZGC2.prototype._estChain = function (sym, flag, pred, r) {
     var acc = [0];
     var excl = new Set();
+    var ctx = this._o0Ctx();
     if (pred !== null) {
       var t = this.lzpFlag;
       var e0 = t.findEncode(0);
@@ -992,11 +1088,11 @@
     var tabs = this._wordTables();
     var hit = false;
     for (var i = 0; i < tabs.length; i++) {
-      if (this._estFt(acc, tabs[i][0], sym, excl)) { hit = true; break; }
+      if (this._estFt(acc, tabs[i][0], sym, excl, ctx)) { hit = true; break; }
     }
     if (!hit) {
       var o0 = this.m.stO0;
-      if (!this._estFt(acc, o0, sym, excl)) {
+      if (!this._estFt(acc, o0, sym, excl, ctx)) {
         var hist = this.bhist.slice();
         this._estVarint(r, hist);
       }
@@ -1237,12 +1333,13 @@
           }
           if (!done) {
             var o0 = m.stO0;
+            var ctx = this._o0Ctx();
             if (o0.inTable(sym, excl)) {
-              rr = o0.findEncode(sym, excl);
+              rr = o0.findEncode(sym, excl, ctx);
               enc.encode(rr[0], rr[1], rr[2]);
               o0.adapt(sym);
             } else {
-              rr = o0.findEncode(ESC_RANK, excl);
+              rr = o0.findEncode(ESC_RANK, excl, ctx);
               enc.encode(rr[0], rr[1], rr[2]);
               o0.adapt(ESC_RANK);
               this._encVarint(enc, r);
@@ -1428,8 +1525,9 @@
         var r = null;
         if (sym === null) {
           var o0 = m.stO0;
-          var cumO = dec.start(o0.totalExcl(excl));
-          var resO = o0.decodeSym(cumO, excl);
+          var ctx = this._o0Ctx();
+          var cumO = dec.start(o0.totalExcl(excl, ctx));
+          var resO = o0.decodeSym(cumO, excl, ctx);
           dec.finish(resO[1], resO[2]);
           this.m.touched.add(o0);
           if (resO[0] === ESC_RANK) {
